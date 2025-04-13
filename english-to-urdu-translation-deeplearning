@@ -1,0 +1,75 @@
+import pandas as pd
+import numpy as np
+
+
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential,load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import sparse_categorical_crossentropy
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Embedding,GRU,Input,Dense,TimeDistributed,Bidirectional,Dropout
+from sklearn.model_selection import train_test_split
+import pickle
+
+df1 = pd.read_csv('/content/english-corpus.txt', sep='\t', on_bad_lines='skip') 
+df2=pd.read_csv('/content/urdu-corpus.txt',sep='\t', on_bad_lines='skip')
+
+df = pd.concat([df1, df2], axis=1)
+df.columns = ['english', 'urdu'] # Rename columns if necessary
+
+df.head()
+
+df['english'] = df['english'].astype(str)
+df['urdu'] = df['urdu'].astype(str)
+
+df.info()
+
+eng=df['english'].astype(str)
+urdu= df['urdu'].astype(str)
+
+urdu_tokenizer= Tokenizer()
+eng_tokenizer= Tokenizer()
+urdu_tokenizer.fit_on_texts(urdu)
+eng_tokenizer.fit_on_texts(eng)
+tokenized_urdu_sentences = urdu_tokenizer.texts_to_sequences(df['urdu'])
+tokenized_eng_sentences = eng_tokenizer.texts_to_sequences(df['english'])
+
+
+mylen= max([len(text) for text in df['english']])
+mylen
+
+mylenurdu=max( [len(text)for text in df['urdu']])
+mylenurdu
+
+max_sequence_length = max(mylen, mylenurdu) 
+
+preproc_urdu_sentences= pad_sequences(tokenized_urdu_sentences,maxlen=max_sequence_length,padding='post')
+preproc_eng_sentences= pad_sequences(tokenized_eng_sentences,maxlen=max_sequence_length,padding='post')
+
+
+english_vocab_size=len(eng_tokenizer.word_index)+1
+urdu_vocab_size=len(urdu_tokenizer.word_index)+1
+
+model= Sequential()
+model.add(Embedding(english_vocab_size,256))
+model.add(Bidirectional(GRU(256,return_sequences=True)))
+model.add(TimeDistributed(Dense(1024,activation='leaky_relu')))
+model.add(Dropout(0.5))
+model.add(TimeDistributed(Dense(urdu_vocab_size,activation='softmax')))
+model.compile(loss=sparse_categorical_crossentropy,optimizer=Adam(1e-3),metrics=['accuracy'])
+history=model.fit(preproc_eng_sentences,preproc_urdu_sentences,batch_size=64,epochs=10,validation_split=0.2,callbacks=[EarlyStopping(patience=3)])
+
+urdu_index_for_word= {index:word for  word, index in urdu_tokenizer.index_word.items()}
+
+def translation(sentance):
+  sequence=eng_tokenizer.texts_to_sequences(sentance)
+  pad_seq=pad_sequences(sequence,maxlen=80,padding='post')
+  predictions= model.predict(pad_seq)
+  translated_sentence=[]
+  for prediction in predictions:
+    urdu_index=np.argmax(prediction,axis=1)
+    translated_sentence.append(urdu_index_for_word[urdu_index])
+  return ' '.join(translated_sentence)
